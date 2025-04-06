@@ -9,14 +9,15 @@ import TemperatureGauge from './TemperatureGauge';
 const Dashboard = () => {
   const [speed, setSpeed] = useState(0);
   const [rpm] = useState(1.5); // Valeur fixe pour l'instant (1500 RPM)
-const [eventData, setEventData] = useState({ startTime: null, endTime: null, distance: 0, speedVariation: 0 }); // State for event tracking
+  const [eventData, setEventData] = useState({ startTime: null, endTime: null, distance: 0, speedVariation: 0 }); // State for event tracking
   const [selectedCar, setSelectedCar] = useState(null); // State for selected car
   const [carOptions, setCarOptions] = useState([]); // State for car options
   const [loading, setLoading] = useState(true); // Loading state
   const [carAttributes, setCarAttributes] = useState({ acceleration: 0, braking: 0 }); // State for car attributes
-
   const [fuel] = useState(0.1); // Valeur fixe (proche de "E")
   const [temperature] = useState(0.5); // Valeur fixe (milieu entre C et H)
+  const [accelerationPercentage, setAccelerationPercentage] = useState(100); // State for acceleration percentage
+  const [isRecording, setIsRecording] = useState(false); // Nouvel état pour suivre l'enregistrement
 
   useEffect(() => {
     // Fetch car options from the server
@@ -42,8 +43,8 @@ const [eventData, setEventData] = useState({ startTime: null, endTime: null, dis
         try {
           const response = await axios.get(`http://localhost:5000/api/voiture/${selectedCar}`); // Adjust the endpoint as necessary
           setCarAttributes({
-            acceleration: response.data.acceleration,
-            braking: response.data.freinage,
+            acceleration: response.data.capacite_acceleration,
+            braking: response.data.capacite_freinage,
           }); // Set car attributes based on the response
           console.log('Car attributes:', response.data); // Log the fetched attributes
         } catch (error) {
@@ -57,67 +58,109 @@ const [eventData, setEventData] = useState({ startTime: null, endTime: null, dis
 
   useEffect(() => {
     const handleKeyDown = (event) => {
-      // if (event.key === 'ArrowUp') {
       if (event.key === 'z') {
-        setSpeed((prevSpeed) => Math.min(prevSpeed + carAttributes.acceleration, 240)); // Use acceleration for speed increase
-        console.log('Acceleration value:', carAttributes.acceleration); // Log the acceleration value for debugging
+        const validAcceleration = typeof carAttributes.acceleration === 'number' ? carAttributes.acceleration : 0; // Ensure acceleration is valid
+        const effectiveAcceleration = (validAcceleration * accelerationPercentage) / 100; // Adjust acceleration based on percentage
+
+        setSpeed((prevSpeed) => Math.min(prevSpeed + effectiveAcceleration, 240)); // Use acceleration for speed increase
+        console.log('Acceleration value:', effectiveAcceleration); // Log the acceleration value for debugging
+
         // Start tracking event
-        if (!eventData.startTime) {
-          setEventData((prev) => ({ ...prev, startTime: new Date(), speedVariation: carAttributes.acceleration })); // Example speed variation
+        if (isRecording && !eventData.startTime) {
+          const startTime = new Date();
+          setEventData((prev) => ({ ...prev, startTime, speedVariation: effectiveAcceleration })); // Example speed variation
+
+          // Send data to the mouvement endpoint
+          axios.post('http://localhost:5000/api/mouvements/insert', {
+            voiture_id: selectedCar, // Use selected car ID
+            depart: startTime.toISOString(), // Start time
+            arrivee: null, // End time will be updated later
+            duree: 0, // Duration will be calculated later
+            distance: 0, // Distance will be calculated later
+          })
+            .then((response) => {
+              const mouvementId = response.data.id; // Get the inserted mouvement ID
+              console.log('Mouvement recorded:', response.data);
+
+              // Update eventData with mouvementId
+              setEventData((prev) => ({ ...prev, mouvementId }));
+
+              // Send data to the events endpoint
+              axios.post('http://localhost:5000/api/events', {
+                mouvement_id: mouvementId, // Use the mouvement ID
+                vitesse_de_depart: effectiveAcceleration,
+                distance: 0, // To be calculated
+              }).catch(error => {
+                console.error('Error sending event data:', error);
+              });
+            })
+            .catch((error) => {
+              console.error('Error inserting mouvement:', error);
+            });
         }
-        // Send data to backend
-        axios.post('http://localhost:5000/api/events', {
-          idvoiture: selectedCar, // Use selected car ID
-          heure_debut: new Date(),
-          heure_fin: null, // To be set on keyup
-          variation_de_vitesse: carAttributes.acceleration,
-          distance_parcourue: 0, // To be calculated
-        }).catch(error => {
-          console.error('Error sending event data:', error);
-        });
       } else if (event.key === 'ArrowDown') {
-        console.log('Braking value:', carAttributes.braking); // Log the braking value for debugging
-        const validBraking = typeof carAttributes.braking === 'number' ? carAttributes.braking : 0; // Ensure braking is a valid number
+        const validBraking = typeof carAttributes.braking === 'number' ? carAttributes.braking : 0; // Ensure braking is valid
         setSpeed((prevSpeed) => Math.max(prevSpeed - validBraking, 0)); // Use braking for speed decrease
+
         // Start tracking event
-        if (!eventData.startTime) {
-          setEventData((prev) => ({ ...prev, startTime: new Date(), speedVariation: -validBraking })); // Example speed variation
+        if (isRecording && !eventData.startTime) {
+          const startTime = new Date();
+          setEventData((prev) => ({ ...prev, startTime, speedVariation: -validBraking })); // Example speed variation
+
+          // Send data to the mouvement endpoint
+          axios.post('http://localhost:5000/api/mouvements/insert', {
+            voiture_id: selectedCar, // Use selected car ID
+            depart: startTime.toISOString(), // Start time
+            arrivee: null, // End time will be updated later
+            duree: 0, // Duration will be calculated later
+            distance: 0, // Distance will be calculated later
+          })
+            .then((response) => {
+              const mouvementId = response.data.id; // Get the inserted mouvement ID
+              console.log('Mouvement recorded:', response.data);
+
+              // Update eventData with mouvementId
+              setEventData((prev) => ({ ...prev, mouvementId }));
+
+              // Send data to the events endpoint
+              axios.post('http://localhost:5000/api/events', {
+                mouvement_id: mouvementId, // Use the mouvement ID
+                vitesse_de_depart: -validBraking,
+                distance: 0, // To be calculated
+              }).catch(error => {
+                console.error('Error sending event data:', error);
+              });
+            })
+            .catch((error) => {
+              console.error('Error inserting mouvement:', error);
+            });
         }
-        // Send data to backend
-        axios.post('http://localhost:5000/api/events', {
-          idvoiture: selectedCar, // Use selected car ID
-          heure_debut: new Date(),
-          heure_fin: null, // To be set on keyup
-          variation_de_vitesse: -validBraking,
-          distance_parcourue: 0, // To be calculated
-        }).catch(error => {
-          console.error('Error sending event data:', error);
-        });
       }
     };
 
     const handleKeyUp = () => {
       // Stop tracking event
-      if (eventData.startTime) {
-        const endTime = new Date();
-        const distance = speed * ((endTime - eventData.startTime) / 1000); // Calculate distance
-        setEventData((prev) => ({ ...prev, endTime, distance }));
-        
-        // Update the event in the database
-        axios.post('http://localhost:5000/api/events', {
-          idvoiture: selectedCar, // Use selected car ID
-          heure_debut: eventData.startTime,
-          heure_fin: endTime,
-          variation_de_vitesse: eventData.speedVariation,
-          distance_parcourue: distance,
-        }).then(response => {
-          console.log('Event recorded:', response.data);
-        }).catch(error => {
-          console.error('Error recording event:', error);
-        });
+      if (!isRecording || !eventData.startTime || !eventData.mouvementId) return;
 
-        setEventData({ startTime: null, endTime: null, distance: 0, speedVariation: 0 }); // Reset event data
-      }
+      const endTime = new Date();
+      const distance = speed * ((endTime - eventData.startTime) / 1000); // Calculate distance
+      setEventData((prev) => ({ ...prev, endTime, distance }));
+
+      // Update the mouvement in the database
+      axios.put('http://localhost:5000/api/mouvements/update', {
+        id: eventData.mouvementId, // Use the mouvement ID stored in eventData
+        voiture_id: selectedCar, // Use selected car ID
+        arrivee: endTime.toISOString(), // End time
+        duree: (endTime - eventData.startTime) / 60000, // Duration in minutes
+        distance: distance, // Calculated distance
+      }).then(response => {
+        console.log('Mouvement updated:', response.data);
+      }).catch(error => {
+        console.error('Error updating mouvement:', error);
+      });
+
+      // Reset event data
+      setEventData({ startTime: null, endTime: null, distance: 0, speedVariation: 0, mouvementId: null });
     };
 
     document.addEventListener('keydown', handleKeyDown);
@@ -127,7 +170,7 @@ const [eventData, setEventData] = useState({ startTime: null, endTime: null, dis
       document.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('keyup', handleKeyUp);
     };
-  }, [eventData.startTime, eventData.speedVariation, speed, selectedCar, carAttributes]); // Add carAttributes to dependencies
+  }, [eventData.startTime, eventData.speedVariation, speed, selectedCar, carAttributes, accelerationPercentage, isRecording, eventData.mouvementId]); // Add carAttributes to dependencies
 
   if (loading) {
     return <div>Loading cars...</div>; // Loading state
@@ -143,10 +186,33 @@ const [eventData, setEventData] = useState({ startTime: null, endTime: null, dis
           onChange={(e) => setSelectedCar(e.target.value)}
         >
           {carOptions.map(car => (
-            <option key={car.id} value={car.id}>{car.modele}</option>
+            <option key={car.id} value={car.id}>{car.marque}</option>
           ))}
         </select>
       </div>
+      <div>
+        <label htmlFor="acceleration-percentage">Acceleration Percentage:</label>
+        <input
+          type="number"
+          id="acceleration-percentage"
+          value={accelerationPercentage}
+          onChange={(e) => setAccelerationPercentage(Math.max(0, Math.min(100, e.target.value)))}
+        />
+      </div>
+      <button
+        onClick={() => setIsRecording((prev) => !prev)}
+        style={{
+          marginTop: '20px',
+          padding: '10px 20px',
+          backgroundColor: isRecording ? 'red' : 'green',
+          color: 'white',
+          border: 'none',
+          borderRadius: '5px',
+          cursor: 'pointer',
+        }}
+      >
+        {isRecording ? 'Stop Recording' : 'Start Recording'}
+      </button>
       <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginTop: '20px' }}>
         <Speedometer speed={speed} />
         <Tachometer rpm={rpm} />
